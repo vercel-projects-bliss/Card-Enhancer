@@ -1,11 +1,9 @@
 """
 Test suite for Real-ESRGAN integration.
 """
-import pytest
+
 import numpy as np
-import cv2
-import tempfile
-import os
+import pytest
 
 
 class TestSRModelType:
@@ -21,7 +19,7 @@ class TestRealESRGANService:
         service = RealESRGANService(model_type=SRModelType.REAL_ESRGAN_X4PLUS, tile_size=256)
         assert service.model_type == SRModelType.REAL_ESRGAN_X4PLUS
         assert service._upsampler is None
-    
+
     def test_fallback_upscaling(self):
         from app.services.real_esrgan_service import RealESRGANService
         service = RealESRGANService()

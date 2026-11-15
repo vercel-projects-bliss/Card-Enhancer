@@ -48,7 +48,7 @@ def compute_lifetimes(graph: GraphSample) -> torch.Tensor:
 
     neighbors: list[set[int]] = [set() for _ in range(n)]
     src, dst = graph.edge_index[0].tolist(), graph.edge_index[1].tolist()
-    for s, d in zip(src, dst):
+    for s, d in zip(src, dst, strict=False):
         if s != d:
             neighbors[s].add(d)
             neighbors[d].add(s)

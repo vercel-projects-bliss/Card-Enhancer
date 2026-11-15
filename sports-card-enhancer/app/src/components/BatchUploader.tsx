@@ -16,17 +16,32 @@ const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_ARCHIVE_TYPES];
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB for images
 const MAX_ZIP_SIZE = 500 * 1024 * 1024; // 500MB for ZIP files
 
+const isZipFile = (file: File) => {
+  return ALLOWED_ARCHIVE_TYPES.includes(file.type) || file.name.toLowerCase().endsWith('.zip');
+};
+
+const validateFile = (file: File): string | null => {
+  const isZip = isZipFile(file);
+
+  if (!ALLOWED_TYPES.includes(file.type) && !isZip) {
+    return `Unsupported format: ${file.type || 'unknown'}`;
+  }
+
+  const maxSize = isZip ? MAX_ZIP_SIZE : MAX_FILE_SIZE;
+  if (file.size > maxSize) {
+    const maxMB = maxSize / 1024 / 1024;
+    return `File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max ${maxMB}MB)`;
+  }
+  return null;
+};
+
 export function BatchUploader({ onFilesSelected }: BatchUploaderProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [previews, setPreviews] = useState<Map<string, string>>(new Map());
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const isZipFile = (file: File) => {
-    return ALLOWED_ARCHIVE_TYPES.includes(file.type) || file.name.toLowerCase().endsWith('.zip');
-  };
-
-  const generatePreview = (file: File) => {
+  const generatePreview = useCallback((file: File) => {
     if (isZipFile(file)) {
       return;
     }
@@ -35,22 +50,7 @@ export function BatchUploader({ onFilesSelected }: BatchUploaderProps) {
       setPreviews(prev => new Map(prev).set(file.name, e.target?.result as string));
     };
     reader.readAsDataURL(file);
-  };
-
-  const validateFile = (file: File): string | null => {
-    const isZip = isZipFile(file);
-    
-    if (!ALLOWED_TYPES.includes(file.type) && !isZip) {
-      return `Unsupported format: ${file.type || 'unknown'}`;
-    }
-    
-    const maxSize = isZip ? MAX_ZIP_SIZE : MAX_FILE_SIZE;
-    if (file.size > maxSize) {
-      const maxMB = maxSize / 1024 / 1024;
-      return `File too large: ${(file.size / 1024 / 1024).toFixed(1)}MB (max ${maxMB}MB)`;
-    }
-    return null;
-  };
+  }, []);
 
   const handleFiles = useCallback((newFiles: FileList | null) => {
     if (!newFiles) return;
@@ -81,7 +81,7 @@ export function BatchUploader({ onFilesSelected }: BatchUploaderProps) {
       }
       toast.success(message);
     }
-  }, []);
+  }, [generatePreview]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();

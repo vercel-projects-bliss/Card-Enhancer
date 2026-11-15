@@ -44,7 +44,24 @@ jobs:
         working-directory: sports-card-enhancer/app
         run: pnpm install --frozen-lockfile
 
-      # `pnpm lint` currently fails on main; `pnpm build` includes `tsc -b`.
+      - name: Lint
+        working-directory: sports-card-enhancer/app
+        run: pnpm lint
+
+      # `pnpm build` includes `tsc -b`.
       - name: Build
         working-directory: sports-card-enhancer/app
         run: pnpm build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Ruff
+        run: |
+          ruff check backend
+          ruff check sports-card-enhancer

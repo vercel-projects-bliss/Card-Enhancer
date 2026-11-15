@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import Any
 
 import numpy as np
 import torch
 
 
-class DataProvenance(str, Enum):
+class DataProvenance(StrEnum):
     """Explicit provenance. Synthetic data must always identify itself."""
 
     REAL = "real"

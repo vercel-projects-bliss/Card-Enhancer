@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, useState} from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -142,7 +142,7 @@ function FloatingParticles() {
   const pointsRef = useRef<THREE.Points>(null);
   const particleCount = 150;
 
-  const [positions, colors, sizes] = useMemo(() => {
+  const [[positions, colors, sizes]] = useState(() => {
     const pos = new Float32Array(particleCount * 3);
     const col = new Float32Array(particleCount * 3);
     const siz = new Float32Array(particleCount);
@@ -161,10 +161,10 @@ function FloatingParticles() {
       siz[i] = Math.random() * 0.08 + 0.02;
     }
     
-    return [pos, col, siz];
-  }, []);
+    return [pos, col, siz] as const;
+  });
 
-  const velocities = useMemo(() => {
+  const [velocities] = useState(() => {
     const vel = new Float32Array(particleCount * 3);
     for (let i = 0; i < particleCount; i++) {
       vel[i * 3] = (Math.random() - 0.5) * 0.008;
@@ -172,7 +172,7 @@ function FloatingParticles() {
       vel[i * 3 + 2] = (Math.random() - 0.5) * 0.008;
     }
     return vel;
-  }, []);
+  });
 
   useFrame((state) => {
     if (pointsRef.current) {
@@ -344,7 +344,7 @@ function DataStreams() {
   const linesRef = useRef<THREE.Group>(null);
   const lineCount = 20;
 
-  const lines = useMemo(() => {
+  const [lines] = useState(() => {
     return Array.from({ length: lineCount }, () => ({
       x: (Math.random() - 0.5) * 20,
       z: (Math.random() - 0.5) * 10 - 5,
@@ -352,7 +352,7 @@ function DataStreams() {
       length: Math.random() * 3 + 1,
       delay: Math.random() * 10
     }));
-  }, []);
+  });
 
   useFrame((state) => {
     if (linesRef.current) {

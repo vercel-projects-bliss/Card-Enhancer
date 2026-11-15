@@ -1,77 +1,89 @@
 """FastAPI main application."""
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+import io
+import json
 import os
 import shutil
-import zipfile
-import io
-import tempfile
 import uuid
-from pathlib import Path
-from typing import List, Optional, Tuple
+import zipfile
 from datetime import datetime, timedelta
-import json
-import asyncio
+from pathlib import Path
+
+from fastapi import (
+    BackgroundTasks,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.models.schemas import (
-    UploadResponse, EnhancementResponse, JobStatusResponse, 
-    DownloadResponse, EnhancementSettings, JobStatus, WebSocketProgressMessage
+    DownloadResponse,
+    EnhancementResponse,
+    EnhancementSettings,
+    JobStatus,
+    JobStatusResponse,
+    UploadResponse,
+    WebSocketProgressMessage,
 )
-from app.services.batch_processor import batch_processor, Job
+from app.services.batch_processor import batch_processor
 from app.utils.image_utils import ImageProcessor
 
 
-def extract_zip_images(zip_content: bytes, extract_dir: Path) -> List[str]:
+def extract_zip_images(zip_content: bytes, extract_dir: Path) -> list[str]:
     """
     Extract images from a ZIP archive.
-    
+
     Returns list of extracted image file paths.
     """
     extracted_paths = []
     allowed_extensions = {'.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp', '.webp'}
-    
+
     with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
         for file_info in zip_ref.infolist():
             # Skip directories and hidden files
             if file_info.is_dir() or file_info.filename.startswith('__MACOSX'):
                 continue
-            
+
             # Check extension
             filename = os.path.basename(file_info.filename)
             if filename.startswith('.'):
                 continue
-                
+
             ext = os.path.splitext(filename)[1].lower()
             if ext not in allowed_extensions:
                 continue
-            
+
             # Check file size (skip files > 50MB)
             if file_info.file_size > settings.MAX_FILE_SIZE:
                 continue
-            
+
             # Extract file
             try:
                 # Create a safe filename (avoid path traversal)
                 safe_filename = os.path.basename(filename)
                 extract_path = extract_dir / safe_filename
-                
+
                 # Handle duplicate filenames
                 base, ext = os.path.splitext(safe_filename)
                 counter = 1
                 while extract_path.exists():
                     extract_path = extract_dir / f"{base}_{counter}{ext}"
                     counter += 1
-                
+
                 with zip_ref.open(file_info) as source, open(extract_path, 'wb') as target:
                     shutil.copyfileobj(source, target)
-                
+
                 extracted_paths.append(str(extract_path))
             except Exception:
                 continue
-    
+
     return extracted_paths
 
 # Create FastAPI app
@@ -133,35 +145,33 @@ async def root():
 
 @app.post("/upload", response_model=UploadResponse)
 async def upload_images(
-    files: List[UploadFile] = File(...),
-    settings_json: Optional[str] = Form(None)
+    files: list[UploadFile] = File(...),
+    settings_json: str | None = Form(None)
 ):
     """
     Upload images for enhancement.
-    
+
     - **files**: Single or multiple image files (.jpg, .png, .tiff, .bmp)
     - **settings_json**: Optional JSON string with enhancement settings
     """
-    # Parse settings
-    enhancement_settings = EnhancementSettings()
+    # Parse settings (upload only validates; values are applied at enhancement time)
     if settings_json:
         try:
-            settings_dict = json.loads(settings_json)
-            enhancement_settings = EnhancementSettings(**settings_dict)
+            EnhancementSettings(**json.loads(settings_json))
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid settings JSON: {e}")
-    
+            raise HTTPException(status_code=400, detail=f"Invalid settings JSON: {e}") from e
+
     # Validate files
     accepted_files = []
     rejected_files = []
     rejected_reasons = []
     saved_paths = []
-    
+
     # Create upload directory with job_id
     job_id = str(uuid.uuid4())
     upload_dir = Path(settings.UPLOAD_DIR) / job_id
     upload_dir.mkdir(parents=True, exist_ok=True)
-    
+
     for file in files:
         # Check file extension
         ext = os.path.splitext(file.filename)[1].lower()
@@ -169,38 +179,38 @@ async def upload_images(
             rejected_files.append(file.filename)
             rejected_reasons.append(f"{file.filename}: Unsupported format {ext}")
             continue
-        
+
         # Check file size
         content = await file.read()
         if len(content) > settings.MAX_FILE_SIZE:
             rejected_files.append(file.filename)
             rejected_reasons.append(f"{file.filename}: File too large")
             continue
-        
+
         # Save file
         try:
             file_path = upload_dir / file.filename
-            
+
             # Handle duplicate filenames
             base, ext = os.path.splitext(file.filename)
             counter = 1
             while file_path.exists():
                 file_path = upload_dir / f"{base}_{counter}{ext}"
                 counter += 1
-            
+
             with open(file_path, "wb") as f:
                 f.write(content)
-            
+
             accepted_files.append(file.filename)
             saved_paths.append(str(file_path))
-        
+
         except Exception as e:
             rejected_files.append(file.filename)
-            rejected_reasons.append(f"{file.filename}: Save failed - {str(e)}")
-    
+            rejected_reasons.append(f"{file.filename}: Save failed - {e!s}")
+
     if not accepted_files:
         raise HTTPException(status_code=400, detail="No valid files uploaded")
-    
+
     return UploadResponse(
         job_id=job_id,
         status=JobStatus.PENDING,
@@ -215,12 +225,12 @@ async def upload_images(
 @app.post("/enhance", response_model=EnhancementResponse)
 async def enhance_images(
     background_tasks: BackgroundTasks,
-    files: List[UploadFile] = File(...),
-    settings_json: Optional[str] = Form(None)
+    files: list[UploadFile] = File(...),
+    settings_json: str | None = Form(None)
 ):
     """
     Upload and enhance images in one request.
-    
+
     - **files**: Single or multiple image files, or ZIP archives containing images
     - **settings_json**: JSON string with enhancement settings
     """
@@ -231,30 +241,30 @@ async def enhance_images(
             settings_dict = json.loads(settings_json)
             enhancement_settings = EnhancementSettings(**settings_dict)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid settings JSON: {e}")
-    
+            raise HTTPException(status_code=400, detail=f"Invalid settings JSON: {e}") from e
+
     # Process and save uploaded files
     saved_paths = []
     temp_dir = settings.TEMP_DIR / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     temp_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Extended allowed extensions including ZIP
     allowed_extensions = settings.ALLOWED_EXTENSIONS | {".zip"}
-    
+
     for file in files:
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in allowed_extensions:
             continue
-        
+
         content = await file.read()
-        
+
         # Handle ZIP files
         if ext == ".zip":
             # Check ZIP size (allow up to 500MB for ZIPs)
             max_zip_size = settings.MAX_FILE_SIZE * 10
             if len(content) > max_zip_size:
                 continue
-            
+
             # Extract images from ZIP
             try:
                 extracted_paths = extract_zip_images(content, temp_dir)
@@ -267,26 +277,26 @@ async def enhance_images(
             # Regular image file
             if len(content) > settings.MAX_FILE_SIZE:
                 continue
-            
+
             file_path = temp_dir / file.filename
             with open(file_path, "wb") as f:
                 f.write(content)
-            
+
             saved_paths.append(str(file_path))
-    
+
     if not saved_paths:
         raise HTTPException(status_code=400, detail="No valid files to process")
-    
+
     # Limit batch size
     if len(saved_paths) > settings.MAX_BATCH_SIZE:
         saved_paths = saved_paths[:settings.MAX_BATCH_SIZE]
-    
+
     # Submit batch job
     job_id = await batch_processor.submit_job(saved_paths, enhancement_settings)
-    
+
     # Estimate processing time (rough estimate: 5 seconds per image)
     estimated_time = len(saved_paths) * 5
-    
+
     return EnhancementResponse(
         job_id=job_id,
         status=JobStatus.PENDING,
@@ -299,12 +309,12 @@ async def enhance_images(
 async def get_job_status(job_id: str):
     """Get the status of a batch job."""
     job = await batch_processor.get_job(job_id)
-    
+
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     batch_job = batch_processor.to_batch_job(job)
-    
+
     return JobStatusResponse(
         job_id=batch_job.id,
         status=batch_job.status,
@@ -322,13 +332,13 @@ async def get_job_status(job_id: str):
 async def download_results(job_id: str):
     """Download enhanced images for a completed job."""
     job = await batch_processor.get_job(job_id)
-    
+
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     if job.status != JobStatus.COMPLETED:
         raise HTTPException(status_code=400, detail=f"Job is not completed (status: {job.status})")
-    
+
     # Determine download file
     if len(job.image_paths) > 1:
         # Return ZIP archive
@@ -350,7 +360,7 @@ async def download_results(job_id: str):
             file_count = 1
         else:
             raise HTTPException(status_code=500, detail="Output file not found")
-    
+
     return DownloadResponse(
         job_id=job_id,
         download_url=download_url,
@@ -364,10 +374,10 @@ async def download_results(job_id: str):
 async def download_file(job_id: str):
     """Direct file download endpoint."""
     job = await batch_processor.get_job(job_id)
-    
+
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     if len(job.image_paths) > 1:
         # Return ZIP
         zip_path = settings.OUTPUT_DIR / f"{job_id}.zip"
@@ -389,18 +399,18 @@ async def download_file(job_id: str):
                 media_type=media_type,
                 filename=output_path.name
             )
-    
+
     raise HTTPException(status_code=404, detail="File not found")
 
 
 @app.post("/preview")
 async def generate_preview(
     file: UploadFile = File(...),
-    settings_json: Optional[str] = Form(None)
+    settings_json: str | None = Form(None)
 ):
     """
     Generate a quick preview of enhancement settings.
-    
+
     Returns a lower-quality preview for faster feedback.
     """
     # Parse settings
@@ -410,35 +420,35 @@ async def generate_preview(
             settings_dict = json.loads(settings_json)
             enhancement_settings = EnhancementSettings(**settings_dict)
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid settings JSON: {e}")
-    
+            raise HTTPException(status_code=400, detail=f"Invalid settings JSON: {e}") from e
+
     # Save uploaded file temporarily
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in settings.ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Unsupported file format")
-    
+
     content = await file.read()
     temp_filename = f"preview_{datetime.now().strftime('%Y%m%d%H%M%S')}{ext}"
     temp_path = settings.TEMP_DIR / temp_filename
-    
+
     with open(temp_path, "wb") as f:
         f.write(content)
-    
+
     try:
         # Generate preview
         from app.services.enhancement_service import EnhancementService
         service = EnhancementService()
-        
+
         preview_image, blemishes = service.generate_preview(
-            str(temp_path), 
+            str(temp_path),
             enhancement_settings,
             max_size=1024
         )
-        
+
         # Save preview
         preview_path = temp_path.with_name(f"{temp_path.stem}_preview{ext}")
         ImageProcessor.save_image(preview_image, str(preview_path), quality=85)
-        
+
         # Return file
         media_type = "image/png" if ext == ".png" else "image/jpeg"
         return FileResponse(
@@ -446,10 +456,10 @@ async def generate_preview(
             media_type=media_type,
             filename=f"preview_{file.filename}"
         )
-    
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Preview generation failed: {str(e)}")
-    
+        raise HTTPException(status_code=500, detail=f"Preview generation failed: {e!s}") from e
+
     finally:
         # Cleanup temp files
         if temp_path.exists():
@@ -463,18 +473,18 @@ async def generate_preview(
 async def websocket_endpoint(websocket: WebSocket, job_id: str):
     """WebSocket endpoint for real-time job progress updates."""
     await websocket.accept()
-    
+
     # Store connection
     if job_id not in active_connections:
         active_connections[job_id] = []
     active_connections[job_id].append(websocket)
-    
+
     # Register progress callback
     async def progress_callback(message: WebSocketProgressMessage):
         await websocket.send_json(message.dict())
-    
+
     batch_processor.register_progress_callback(job_id, progress_callback)
-    
+
     try:
         # Send initial status
         job = await batch_processor.get_job(job_id)
@@ -485,12 +495,12 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                 "progress": job.progress,
                 "message": "Connected"
             })
-        
+
         # Keep connection alive and handle client messages
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            
+
             if message.get("action") == "cancel":
                 success = await batch_processor.cancel_job(job_id)
                 await websocket.send_json({
@@ -498,16 +508,16 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
                     "action": "cancel",
                     "success": success
                 })
-    
+
     except WebSocketDisconnect:
         pass
-    
+
     finally:
         # Cleanup
         batch_processor.unregister_progress_callback(job_id, progress_callback)
         if job_id in active_connections:
             active_connections[job_id] = [
-                ws for ws in active_connections[job_id] 
+                ws for ws in active_connections[job_id]
                 if ws != websocket
             ]
 
@@ -516,28 +526,28 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str):
 async def delete_job(job_id: str):
     """Delete a job and its associated files."""
     job = await batch_processor.get_job(job_id)
-    
+
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     # Cancel if still processing
     if job.status in [JobStatus.PENDING, JobStatus.PROCESSING]:
         await batch_processor.cancel_job(job_id)
-    
+
     # Remove output directory
     output_dir = Path(job.output_dir)
     if output_dir.exists():
         shutil.rmtree(output_dir)
-    
+
     # Remove ZIP if exists
     zip_path = settings.OUTPUT_DIR / f"{job_id}.zip"
     if zip_path.exists():
         zip_path.unlink()
-    
+
     # Remove from processor
     if job_id in batch_processor.jobs:
         del batch_processor.jobs[job_id]
-    
+
     return {"message": f"Job {job_id} deleted successfully"}
 
 
