@@ -1,0 +1,24 @@
+# Minimal lint config aligned with backend/pyproject.toml.
+# Target 3.11 to match backend. Ignore E501 (long lines) as style noise.
+target-version = "py311"
+line-length = 110
+# Vite frontend (and its node_modules) is linted with ESLint, not Ruff.
+extend-exclude = ["app"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+# FastAPI dependency/file defaults are documented and immutable at runtime.
+[lint.flake8-bugbear]
+extend-immutable-calls = [
+  "fastapi.File",
+  "fastapi.Form",
+  "fastapi.Depends",
+  "fastapi.Query",
+  "fastapi.Header",
+  "fastapi.Body",
+  "File",
+  "Form",
+  "Depends",
+]

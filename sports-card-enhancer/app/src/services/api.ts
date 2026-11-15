@@ -60,7 +60,7 @@ export interface JobStatusResponse {
     processed_path?: string;
     status: JobStatus;
     progress: number;
-    detected_blemishes: any[];
+    detected_blemishes: unknown[];
     error_message?: string;
   }[];
   created_at: string;
@@ -157,11 +157,11 @@ export const apiService = {
 export class WebSocketClient {
   private ws: WebSocket | null = null;
   private jobId: string;
-  private onMessage: (data: any) => void;
+  private onMessage: (data: unknown) => void;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
 
-  constructor(jobId: string, onMessage: (data: any) => void) {
+  constructor(jobId: string, onMessage: (data: unknown) => void) {
     this.jobId = jobId;
     this.onMessage = onMessage;
   }
@@ -200,7 +200,7 @@ export class WebSocketClient {
     }
   }
 
-  send(message: any) {
+  send(message: unknown) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
     }

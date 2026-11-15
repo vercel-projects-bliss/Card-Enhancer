@@ -12,7 +12,7 @@ import { BatchUploader } from './components/BatchUploader';
 import { JobMonitor } from './components/JobMonitor';
 import { ImagePreview } from './components/ImagePreview';
 import { EnhancementSettings } from './components/EnhancementSettings';
-import { apiService, type JobStatus, type EnhancementSettings as SettingsType } from './services/api';
+import { apiService, type JobStatus, type JobStatusResponse, type EnhancementSettings as SettingsType } from './services/api';
 
 export interface ProcessingJob {
   id: string;
@@ -48,6 +48,21 @@ function App() {
     output_dpi: 300
   });
 
+  const updateJobStatus = useCallback((jobId: string, status: JobStatusResponse) => {
+    setJobs(prev => prev.map(job => {
+      if (job.id !== jobId) return job;
+      const results = status.images
+        ?.map((img) => img.processed_path)
+        .filter((path): path is string => typeof path === "string" && path.length > 0);
+      return {
+        ...job,
+        status: status.status,
+        progress: status.progress,
+        results,
+      };
+    }));
+  }, []);
+
   // Poll for job status updates
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -64,21 +79,7 @@ function App() {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [jobs]);
-
-  const updateJobStatus = (jobId: string, status: any) => {
-    setJobs(prev => prev.map(job => {
-      if (job.id === jobId) {
-        return {
-          ...job,
-          status: status.status,
-          progress: status.progress,
-          results: status.images?.filter((img: any) => img.processed_path).map((img: any) => img.processed_path)
-        };
-      }
-      return job;
-    }));
-  };
+  }, [jobs, updateJobStatus]);
 
   const handleFilesSelected = useCallback(async (files: File[]) => {
     try {
